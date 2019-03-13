@@ -22,7 +22,7 @@ Console application
     protected function getDefaultCommands()
     {
         return \array_merge(parent::getDefaultCommands(), [
-            new Command\RunCommand(),
+            new Command\ExtractCommand(),
         ]);
     }
 }

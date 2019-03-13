@@ -1,21 +1,4 @@
-## Console application
+## PHP-comment extractor
 
-The console skeleton application
+php bin/console extract "path to source dir|file" "path to generated output directory"
 
-## Installation
-
-```bash
-
-composer create-project samovar/symfony-console-skeleton app
-```
-
-## Requirements
-
-- [Box](https://github.com/box-project/box2)
-- [Symfony console component](https://github.com/symfony/console)
-
-## How use?
-
-```bash
-make build
-```
