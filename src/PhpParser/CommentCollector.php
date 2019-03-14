@@ -2,7 +2,7 @@
 /**
  * Created by PhpStorm.
  * User: Rolland
-* Date: 13.03.2019
+ * Date: 13.03.2019
  * Time: 10:35
  */
 
@@ -14,14 +14,13 @@ use PhpParser\Node;
 use PhpParser\NodeVisitorAbstract;
 use \App\PhpParser\Comment as AppComment;
 
-class CommentCollector extends NodeVisitorAbstract {
-    /** @var int */
-    private $commentsIndex = 0;
+class CommentCollector extends NodeVisitorAbstract
+{
+    /** @var CommentCollection */
+    private $collection;
 
-    /** @var array AppComment[] */
-    private $comments = [];
-
-    public function enterNode(Node $node) {
+    public function enterNode(Node $node)
+    {
         /*
         сложные выражения на одной строке содержат более одной ноды.
         и, получается, что для каждого из них триггерится enterNode с одними и теми же комментами. Это ж дерево))
@@ -33,12 +32,12 @@ class CommentCollector extends NodeVisitorAbstract {
         */
         static $prevNodeLine = null;
         // dump(get_class($node));
-        if($prevNodeLine === $node->getLine()){
-            return ;
+        if ($prevNodeLine === $node->getLine()) {
+            return;
         }
         $nodeComments = $node->getComments();
         // dump($nodeComments);
-        if($nodeComments ){
+        if ($nodeComments) {
             foreach ($nodeComments as $comment) {
                 $this->storeComment($comment);
             }
@@ -46,34 +45,46 @@ class CommentCollector extends NodeVisitorAbstract {
         $prevNodeLine = $node->getLine();
     }
 
-    protected function storeComment(Comment $comment){
+    protected function storeComment(Comment $comment)
+    {
         // помни, что объекты передаются по ссылке
 
         // условие, что текущий комент не является продолжением предыдущего
         /** @var AppComment $prevComment */
-        $prevComment = $this->comments[$this->commentsIndex] ?? false;
+        $prevComment = $this->collection->last();
         // таковым признаком будем считать то, что он начинается сразу после окончания предудущего
         $sameComment =
             $prevComment
             &&
-            ($prevComment->getEndLine()+1 == $comment->getLine())
-        ;
-        if(!$sameComment){
-            $this->commentsIndex ++;
+            ($prevComment->getEndLine() + 1 == $comment->getLine());
+        if (!$sameComment) {
             $storedComment = new AppComment('');
-            $storedComment->copyAttributes($comment);
-            $this->comments[$this->commentsIndex] = $storedComment;
-        }else{
-            $storedComment  = $this->comments[$this->commentsIndex];
+            $storedComment->copyAttributesFrom($comment);
+            $this->collection->addComment($storedComment);
+        } else {
+            $storedComment = $prevComment;
         }
-        $storedComment -> addToText($comment->getText());
+        $storedComment->addToText($comment->getText());
     }
 
     /**
-     * @return \App\PhpParser\Comment[]
+     * @return CommentCollection
      */
-    public function getComments(): array
+    public function getCollection(): CommentCollection
     {
-        return $this->comments;
+        return $this->collection;
     }
-};
+
+    /**
+     * @param CommentCollection $comments
+     */
+    public function setCollection(CommentCollection $comments): void
+    {
+        $this->collection = $comments;
+    }
+
+    public function unsetCollection()
+    {
+        $this->collection = null;
+    }
+}

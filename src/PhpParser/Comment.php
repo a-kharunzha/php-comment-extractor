@@ -25,7 +25,7 @@ class Comment extends BaseComment
         return $text;
     }
 
-    function copyAttributes(BaseComment $source){
+    function copyAttributesFrom(BaseComment $source){
         // текст копировать не нужно, потому что он задается при создании объекта
         $this->line = $source->getLine();
         $this->filePos = $source->getFilePos();

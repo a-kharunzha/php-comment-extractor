@@ -2,8 +2,10 @@
 
 namespace App\Console\Command;
 
+use App\PhpParser\CollectionFileDumper;
+use App\PhpParser\CommentCollection;
 use App\PhpParser\CommentCollector;
-use App\PhpParser\CommentDumper;
+use App\PhpParser\CollectionDumper;
 use PhpParser\Error as ParserError;
 use PhpParser\Lexer;
 use PhpParser\NodeTraverser;
@@ -31,12 +33,12 @@ class ExtractCommand extends Command
     private $io;
 
     const OUTPUT_FILE_EXT = 'txt';
-    const OUTPUT_DIR_RIGHTS = 0644;
-    const OUTPUT_FILE_RIGHTS = 0755;
     /** @var NodeTraverser */
     private $nodeTraverser;
     /** @var Parser */
     private $parser;
+    /** @var CommentCollector */
+    private $collector;
 
     protected function configure(): void
     {
@@ -66,7 +68,7 @@ EOF
         $this->input = $input;
         $this->output = $output;
         $this->inputPath = $this->makeInputPath($input->getArgument('input'));
-        $this->outputPath = $this->makeOutputPath($input->getArgument('output'), $this->inputPath);
+        $this->outputPath = $this->prepareOutputPath($input->getArgument('output'), $this->inputPath);
         // objects
         $this->io = new SymfonyStyle($this->input, $this->output);
         $this->nodeTraverser = new NodeTraverser();
@@ -76,31 +78,32 @@ EOF
             )
         ));
         $this->parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP7, $lexer);
+        $this->collector = new CommentCollector();
+        $this->nodeTraverser->addVisitor($this->collector);
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $this->io->writeln('Path to process: '.$this->inputPath);
         $this->io->writeln('Path to result: '.$this->outputPath);
-        $collector = $this->handlePath($this->inputPath);
-        // dump($collector->getComments());
-        (new CommentDumper($collector))
-            ->dumpToFile($this->outputPath);
-
+        /*
+        @todo: где-то тут нужно будет ввести опции, определяющие, нужно ли писать в один общий файл, или в пачку отдельных
+        */
+        $dumper = new CollectionFileDumper($this->outputPath);
+        $this->handlePath($this->inputPath,$dumper);
         return 0;
     }
 
-    private function handlePath(string $inputPath) : CommentCollector
+    /**
+     * обрабатывает все файды по указанному пути, неважно директории или файла. Дампит результат
+     * @param string $inputPath
+     *
+     * @param CollectionDumper $dumper
+     *
+     * @return void
+     */
+    private function handlePath(string $inputPath,CollectionDumper $dumper) : void
     {
-        // пока только один коллектор на все файлы
-        /*
-        @todo: где-то тут нужно будет ввести опции, определяющие, нужно ли писать в один общий файл, или в пачку отдельных
-        как вариант, handlePath может возвращать коллекцию коллекторов, которая уже потом пойдет в дампер коллекций
-        вообще, если так подумать, то коллектор сам по себе должен возвращать какую-то коллекцию, а не содержать ее в себе. "S", ёпта
-        а handleFile будет наружу отдавать эту коллекцию, тогда коллектор можно будет или там же пересозавать, или резетить, или ставить ему новую коллекцию извне
-        */
-        $collector = new CommentCollector();
-        $this->nodeTraverser->addVisitor($collector);
         $filesToProcess = [];
         if(is_file($inputPath)){
             $filesToProcess[] = $inputPath;
@@ -115,14 +118,25 @@ EOF
                 $filesToProcess[] = $file->getRealPath();
             }
         }
-        //
-        foreach($filesToProcess as $filePath){
-            $this->handleFile($filePath);
+        // обрабатываем файлы и сразу выбрасываем ответ переденным дампером
+        foreach ($filesToProcess as $filePath) {
+            $collection = $this->handleFile($filePath);
+            $dumper->dump($collection);
+            // поюзал память - почисти
+            unset($collection);
         }
-        return $collector;
     }
 
-    function handleFile(string $inputFilePath) : void{
+    /**
+     * собирает из файла все комментарии, отдает в виде коллекции
+     *
+     * @param string $inputFilePath
+     *
+     * @return CommentCollection
+     */
+    function handleFile(string $inputFilePath) : CommentCollection{
+        $collection = new CommentCollection($inputFilePath);
+        $this->collector->setCollection($collection);
         $code = file_get_contents($inputFilePath);
         // dump($code);
         try {
@@ -131,6 +145,9 @@ EOF
         } catch (ParserError $error) {
             echo "Parse error: {$error->getMessage()}\n";
         }
+        // отцепляем коллекцию от коллектора, чтобы ее потом после использования можно было дропнуть из памяти
+        $this->collector->unsetCollection();
+        return $collection;
     }
 
     /**
@@ -152,15 +169,19 @@ EOF
         return $realPath;
     }
 
-    private function makeOutputPath($rawDir, string $inputPath)
+    /**
+     * генерирует на основе входных аргументов полный пусть до файла, куда нужно будет записать результат. Без проверки на существование
+     *
+     * @param $rawDir
+     * @param string $inputPath
+     *
+     * @return string
+     */
+    private function prepareOutputPath($rawDir, string $inputPath)
     {
         $rawDir = Path::canonicalize($rawDir);
-        $absolute = Path::makeAbsolute($rawDir,getcwd());
-        if(!file_exists($rawDir)){
-            $this->io->writeln('Creating directory for output: '.$absolute);
-            mkdir ($absolute ,self::OUTPUT_DIR_RIGHTS,true);
-        }
+        $absoluteDir = Path::makeAbsolute($rawDir,getcwd());
         $filename = Path::getFilenameWithoutExtension($inputPath).'.'.self::OUTPUT_FILE_EXT;
-        return $absolute.DIRECTORY_SEPARATOR.$filename;
+        return $absoluteDir.DIRECTORY_SEPARATOR.$filename;
     }
 }
