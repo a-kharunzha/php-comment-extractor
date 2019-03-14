@@ -6,6 +6,12 @@ use App\PhpParser\CollectionFileDumper;
 use App\PhpParser\CommentCollection;
 use App\PhpParser\CommentCollector;
 use App\PhpParser\CollectionDumper;
+use Glopgar\Monolog\Processor\TimerProcessor;
+use Monolog\Handler\StreamHandler;
+use Monolog\Logger;
+use Monolog\Processor\MemoryPeakUsageProcessor;
+use Monolog\Processor\MemoryUsageProcessor;
+use Monolog\Registry;
 use PhpParser\Error as ParserError;
 use PhpParser\Lexer;
 use PhpParser\NodeTraverser;
@@ -64,6 +70,10 @@ EOF
 
     protected function initialize(InputInterface $input, OutputInterface $output)
     {
+        $this->initializeLoggers();
+        //
+        $log = Registry::getInstance('extract');
+        $log->debug('Initialize start: ',['timer' => ['initialize' => 'start']]);
         // strings
         $this->input = $input;
         $this->output = $output;
@@ -80,17 +90,32 @@ EOF
         $this->parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP7, $lexer);
         $this->collector = new CommentCollector();
         $this->nodeTraverser->addVisitor($this->collector);
+        //
+        $log->debug('Initialize end: ',['timer' => ['initialize' => 'stop']]);
+    }
+
+    private function initializeLoggers(){
+        $logger = new Logger('extract');
+        $handler = new StreamHandler($_SERVER['DOCUMENT_ROOT'].'/logs/extract_command.log', Logger::DEBUG);
+        $logger ->pushHandler($handler);
+        $logger->pushProcessor(new TimerProcessor(4));
+        $logger->pushProcessor(new MemoryUsageProcessor());
+        $logger->pushProcessor(new MemoryPeakUsageProcessor());
+        Registry::addLogger($logger);
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $this->io->writeln('Path to process: '.$this->inputPath);
-        $this->io->writeln('Path to result: '.$this->outputPath);
+        $log = Registry::getInstance('extract');
+        $log->debug('Execute start: ',['timer' => ['execute' => 'start']]);
+        $log->debug('Path to process: '.$this->inputPath);
+        $log->debug('Path to result: '.$this->outputPath);
         /*
         @todo: где-то тут нужно будет ввести опции, определяющие, нужно ли писать в один общий файл, или в пачку отдельных
         */
         $dumper = new CollectionFileDumper($this->outputPath);
         $this->handlePath($this->inputPath,$dumper);
+        $log->debug('Execute end: ',['timer' => ['execute' => 'stop']]);
         return 0;
     }
 
@@ -104,6 +129,9 @@ EOF
      */
     private function handlePath(string $inputPath,CollectionDumper $dumper) : void
     {
+        $log = Registry::getInstance('extract');
+        $log->debug('Search files start: ',['timer' => ['search_files' => 'start']]);
+        //
         $filesToProcess = [];
         if(is_file($inputPath)){
             $filesToProcess[] = $inputPath;
@@ -118,12 +146,21 @@ EOF
                 $filesToProcess[] = $file->getRealPath();
             }
         }
+        $log->debug('Search files end: ',['timer' => ['search_files' => 'stop']]);
+        $log->debug('Count files to process: '.count($filesToProcess));
+
         // обрабатываем файлы и сразу выбрасываем ответ переденным дампером
         foreach ($filesToProcess as $filePath) {
+            $relPath = Path::makeRelative($filePath, $_SERVER['DOCUMENT_ROOT']);
+            $context = ['path'=>$relPath];
+            $log->debug('Process file start',array_merge($context,['timer' => ['file_handle' => 'start','file_parse' => 'start']]));
             $collection = $this->handleFile($filePath);
+            $log->debug('Parse file end, dump start',array_merge($context,['timer' => ['file_parse' => 'stop','file_dump' => 'start']]));
             $dumper->dump($collection);
             // поюзал память - почисти
             unset($collection);
+            $log->debug('Process file end',$context);
+            $log->debug('Process file end',array_merge($context,['timer' => ['file_handle' => 'stop','file_dump' => 'stop']]));
         }
     }
 
@@ -162,7 +199,7 @@ EOF
     private function makeInputPath(string $rawPath)
     {
         // realpath сам резолвит относительные пути
-        $realPath = Path::canonicalize($rawPath);
+        $realPath = Path::canonicalize(realpath($rawPath));
         if(!file_exists($realPath)){
             throw new \InvalidArgumentException('Specified input path does not exists: '.$rawPath);
         }
@@ -182,6 +219,6 @@ EOF
         $rawDir = Path::canonicalize($rawDir);
         $absoluteDir = Path::makeAbsolute($rawDir,getcwd());
         $filename = Path::getFilenameWithoutExtension($inputPath).'.'.self::OUTPUT_FILE_EXT;
-        return $absoluteDir.DIRECTORY_SEPARATOR.$filename;
+        return Path::canonicalize($absoluteDir.DIRECTORY_SEPARATOR.$filename);
     }
 }
