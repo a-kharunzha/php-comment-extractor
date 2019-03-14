@@ -7,6 +7,7 @@ use App\PhpParser\CommentDumper;
 use PhpParser\Error as ParserError;
 use PhpParser\Lexer;
 use PhpParser\NodeTraverser;
+use PhpParser\Parser;
 use PhpParser\ParserFactory;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -31,6 +32,10 @@ class ExtractCommand extends Command
     const OUTPUT_FILE_EXT = 'txt';
     const OUTPUT_DIR_RIGHTS = 0644;
     const OUTPUT_FILE_RIGHTS = 0755;
+    /** @var NodeTraverser */
+    private $nodeTraverser;
+    /** @var Parser */
+    private $parser;
 
     protected function configure(): void
     {
@@ -54,53 +59,56 @@ EOF
         ;
     }
 
+    protected function initialize(InputInterface $input, OutputInterface $output)
+    {
+        // strings
+        $this->input = $input;
+        $this->output = $output;
+        $this->inputPath = $this->makeInputPath($input->getArgument('input'));
+        $this->outputPath = $this->makeOutputPath($input->getArgument('output'), $this->inputPath);
+        // objects
+        $this->io = new SymfonyStyle($this->input, $this->output);
+        $this->nodeTraverser = new NodeTraverser();
+        $lexer = new Lexer(array(
+            'usedAttributes' => array(
+                'comments', 'startLine', 'endLine','startTokenPos','endTokenPos'
+            )
+        ));
+        $this->parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP7, $lexer);
+    }
+
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
 
         $this->io->writeln('Path to process: '.$this->inputPath);
         $this->io->writeln('Path to result: '.$this->outputPath);
         // пока только один файл
-        $code = file_get_contents($this->inputPath);
-        // dump($code);
-
-        $lexer = new Lexer(array(
-            'usedAttributes' => array(
-                'comments', 'startLine', 'endLine','startTokenPos','endTokenPos'
-            )
-        ));
-        //
-        $parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP7, $lexer);
-        try {
-            $ast = $parser->parse($code);
-        } catch (ParserError $error) {
-            echo "Parse error: {$error->getMessage()}\n";
-            return 0;
-        }
-
-        //
-        $collector = new CommentCollector();
-
-        $traverser = new NodeTraverser();
-        $traverser->addVisitor($collector);
-        $traverser->traverse($ast);
+        $collector = $this->handleFile($this->inputPath);
         // dump($collector->getComments());
         (new CommentDumper($collector))
             ->dumpToFile($this->outputPath);
-
         return 0;
     }
 
-    protected function initialize(InputInterface $input, OutputInterface $output)
-    {
-        $this->input = $input;
-        $this->output = $output;
-        $this->io = new SymfonyStyle($this->input, $this->output);
-        $this->inputPath = $this->makeInputPath($input->getArgument('input'));
-        $this->outputPath = $this->makeOutputPath($input->getArgument('output'), $this->inputPath);
+
+
+    function handleFile(string $inputFilePath) : CommentCollector{
+        $collector = new CommentCollector();
+        $this->nodeTraverser->addVisitor($collector );
+        $code = file_get_contents($inputFilePath);
+        // dump($code);
+        try {
+            $ast = $this->parser->parse($code);
+            $this->nodeTraverser->traverse($ast);
+        } catch (ParserError $error) {
+            echo "Parse error: {$error->getMessage()}\n";
+        }
+        $this->nodeTraverser->removeVisitor($collector);
+        return $collector;
     }
 
     /**
-     * норммализует и превращает в абсолютный путь до файла для обработки. Проверяет что он существует
+     * нормализует и превращает в абсолютный путь до файла для обработки. Проверяет что он существует
      *
      * @param string $getcwd
      * @param string $rawPath
@@ -110,10 +118,8 @@ EOF
      */
     private function makeInputPath(string $rawPath)
     {
-        // $this->io->writeln('$rawPath: '.$rawPath);
         // realpath сам резолвит относительные пути
         $realPath = Path::canonicalize($rawPath);
-        // $this->io->writeln('$realPath: '.$realPath);
         if(!file_exists($realPath)){
             throw new \InvalidArgumentException('Specified input path does not exists: '.$rawPath);
         }
@@ -122,16 +128,13 @@ EOF
 
     private function makeOutputPath($rawDir, string $inputPath)
     {
-        // dump('$rawPath: ', $rawPath);
         $rawDir = Path::canonicalize($rawDir);
-        // dump('$rawDir: ', $rawDir);
         $absolute = Path::makeAbsolute($rawDir,getcwd());
         if(!file_exists($rawDir)){
             $this->io->writeln('Creating directory for output: '.$absolute);
             mkdir ($absolute ,self::OUTPUT_DIR_RIGHTS,true);
         }
         $filename = Path::getFilenameWithoutExtension($inputPath).'.'.self::OUTPUT_FILE_EXT;
-        // dump('$filename: ', $filename);
         return $absolute.DIRECTORY_SEPARATOR.$filename;
     }
 }
