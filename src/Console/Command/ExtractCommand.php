@@ -14,6 +14,7 @@ use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
+use Symfony\Component\Finder\Finder;
 use Webmozart\PathUtil\Path;
 
 class ExtractCommand extends Command
@@ -79,22 +80,49 @@ EOF
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-
         $this->io->writeln('Path to process: '.$this->inputPath);
         $this->io->writeln('Path to result: '.$this->outputPath);
-        // пока только один файл
-        $collector = $this->handleFile($this->inputPath);
+        $collector = $this->handlePath($this->inputPath);
         // dump($collector->getComments());
         (new CommentDumper($collector))
             ->dumpToFile($this->outputPath);
+
         return 0;
     }
 
-
-
-    function handleFile(string $inputFilePath) : CommentCollector{
+    private function handlePath(string $inputPath) : CommentCollector
+    {
+        // пока только один коллектор на все файлы
+        /*
+        @todo: где-то тут нужно будет ввести опции, определяющие, нужно ли писать в один общий файл, или в пачку отдельных
+        как вариант, handlePath может возвращать коллекцию коллекторов, которая уже потом пойдет в дампер коллекций
+        вообще, если так подумать, то коллектор сам по себе должен возвращать какую-то коллекцию, а не содержать ее в себе. "S", ёпта
+        а handleFile будет наружу отдавать эту коллекцию, тогда коллектор можно будет или там же пересозавать, или резетить, или ставить ему новую коллекцию извне
+        */
         $collector = new CommentCollector();
-        $this->nodeTraverser->addVisitor($collector );
+        $this->nodeTraverser->addVisitor($collector);
+        $filesToProcess = [];
+        if(is_file($inputPath)){
+            $filesToProcess[] = $inputPath;
+        }else{
+            $finder = new Finder();
+            $finder
+                ->files()
+                ->name(['*.php','*.html'])
+                ->in($inputPath)
+            ;
+            foreach($finder as $file){
+                $filesToProcess[] = $file->getRealPath();
+            }
+        }
+        //
+        foreach($filesToProcess as $filePath){
+            $this->handleFile($filePath);
+        }
+        return $collector;
+    }
+
+    function handleFile(string $inputFilePath) : void{
         $code = file_get_contents($inputFilePath);
         // dump($code);
         try {
@@ -103,8 +131,6 @@ EOF
         } catch (ParserError $error) {
             echo "Parse error: {$error->getMessage()}\n";
         }
-        $this->nodeTraverser->removeVisitor($collector);
-        return $collector;
     }
 
     /**
